@@ -1,57 +1,42 @@
 // src/components/TutorPanel.jsx
 import React, { useState, useEffect } from 'react';
 import OpenAIWrapper from '../utils/OpenAIWrapper';
-import { Chess } from 'chess.js';
 
-function TutorPanel({ game, moveHistory, lastMove, orientation, onMoveSelect }) {
+function TutorPanel({ game, moveHistory, lastMove, orientation }) {
   const [moves, setMoves] = useState([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [error, setError] = useState(null);
   const [llm] = useState(() => new OpenAIWrapper(process.env.REACT_APP_OPENAI_API_KEY));
 
-  const validateMove = (game, moveNotation) => {
-    try {
-      const chess = new Chess(game.fen());
-      const legalMoves = chess.moves();
-      return legalMoves.includes(moveNotation);
-    } catch (e) {
-      return false;
-    }
-  };
-  
   useEffect(() => {
     const analyzePosition = async () => {
       if (!game || !lastMove) return;
 
       const lastMoveColor = moveHistory[moveHistory.length - 1]?.color;
       const isOpponentMove = (orientation === 'white' && lastMoveColor === 'b') ||
-                            (orientation === 'black' && lastMoveColor === 'w');
+                           (orientation === 'black' && lastMoveColor === 'w');
 
       if (!isOpponentMove) return;
 
       try {
         setIsAnalyzing(true);
-        const analysis = await llm.analyzePosition(
+        setError(null);
+        
+        const validMoves = await llm.analyzePosition(
           game.fen(),
           `${lastMove.from}-${lastMove.to}`
         );
-        
-        const moveMatches = analysis.match(/Move \d: (.+)$/gm);
-        if (moveMatches) {
-          const parsedMoves = moveMatches.map(moveText => {
-            const [move, ...explanationParts] = moveText.split(' - ');
-            const moveNotation = move.replace(/Move \d: /, '').trim();
-            const isLegal = validateMove(game, moveNotation);
-            return {
-              move: moveNotation,
-              explanation: explanationParts.join(' - ').trim(),
-              isLegal
-            };
-          }).filter(move => move.isLegal);  // Only keep legal moves
-          setMoves(parsedMoves);
+
+        if (Array.isArray(validMoves) && validMoves.length > 0) {
+          setMoves(validMoves);
+        } else {
+          setError("No valid moves found. Please try again.");
+          setMoves([]);
         }
       } catch (error) {
         console.error('Error getting analysis:', error);
-        setMoves([{ move: "Error analyzing position", explanation: "Please try again" }]);
+        setError("Error analyzing position. Please try again.");
+        setMoves([]);
       } finally {
         setIsAnalyzing(false);
       }
@@ -68,6 +53,8 @@ function TutorPanel({ game, moveHistory, lastMove, orientation, onMoveSelect }) 
           <h3 className="font-medium text-lg mb-3">Recommended Moves</h3>
           {isAnalyzing ? (
             <div className="text-center text-gray-500">Analyzing position...</div>
+          ) : error ? (
+            <div className="text-center text-red-500">{error}</div>
           ) : moves.length > 0 ? (
             <div className="space-y-3">
               {moves.map((move, index) => (
@@ -97,32 +84,30 @@ function TutorPanel({ game, moveHistory, lastMove, orientation, onMoveSelect }) 
         <div className="p-3 bg-gray-50 rounded">
           <button 
             className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors w-full"
-            onClick={() => {
+            onClick={async () => {
               setIsAnalyzing(true);
+              setError(null);
               setMoves([]);
+              
               const lastMove = moveHistory[moveHistory.length - 1];
               if (lastMove) {
-                llm.analyzePosition(
-                  game.fen(),
-                  `${lastMove.from}-${lastMove.to}`
-                ).then(analysis => {
-                  const moveMatches = analysis.match(/Move \d: (.+)$/gm);
-                  if (moveMatches) {
-                    const parsedMoves = moveMatches.map(moveText => {
-                      const [move, ...explanationParts] = moveText.split(' - ');
-                      const moveNotation = move.replace(/Move \d: /, '').trim();
-                      const isLegal = validateMove(game, moveNotation);
-                      return {
-                        move: moveNotation,
-                        explanation: explanationParts.join(' - ').trim(),
-                        isLegal
-                      };
-                    }).filter(move => move.isLegal);  // Only keep legal moves
-                    setMoves(parsedMoves);
+                try {
+                  const validMoves = await llm.analyzePosition(
+                    game.fen(),
+                    `${lastMove.from}-${lastMove.to}`
+                  );
+                  
+                  if (Array.isArray(validMoves) && validMoves.length > 0) {
+                    setMoves(validMoves);
+                  } else {
+                    setError("No valid moves found. Please try again.");
                   }
-                }).finally(() => {
+                } catch (error) {
+                  console.error('Error getting analysis:', error);
+                  setError("Error analyzing position. Please try again.");
+                } finally {
                   setIsAnalyzing(false);
-                });
+                }
               }
             }}
             disabled={isAnalyzing}
